@@ -5,6 +5,11 @@ on:
     branches: [main]
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/release.yml'
 
 permissions:
   contents: write
