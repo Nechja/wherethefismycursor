@@ -146,14 +146,14 @@ func runTrayCommand(cmd int) {
 	case cmdHalo:
 		cfg.HaloEnabled = !cfg.HaloEnabled
 		saveConfig()
-		syncSettingsControls()
+		invalidateSettings()
 	case cmdShake:
 		cfg.ShakeEnabled = !cfg.ShakeEnabled
 		saveConfig()
-		syncSettingsControls()
+		invalidateSettings()
 	case cmdAutostart:
 		setAutostart(!autostartEnabled())
-		syncSettingsControls()
+		invalidateSettings()
 	case cmdQuit:
 		quitApp()
 	}

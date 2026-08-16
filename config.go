@@ -17,12 +17,20 @@ const (
 	configFileName   = "config.json"
 	manifestFileName = "comctl32.manifest"
 
+	styleSolid   = "solid"
+	styleDual    = "dual"
+	styleSplit   = "split"
+	styleCross   = "cross"
+	styleRainbow = "rainbow"
+	stylePrism   = "prism"
+
 	haloSizeMin    = 12
 	haloSizeMax    = 60
 	sensitivityMin = 1
 	sensitivityMax = 10
 
 	defaultHaloColor   = "#FFD25A"
+	defaultHaloColor2  = "#2E6BFF"
 	defaultRingColor   = "#4FC3FF"
 	defaultHaloSize    = 24
 	defaultSensitivity = 6
@@ -35,10 +43,10 @@ type rgb struct{ r, g, b uint8 }
 
 type appConfig struct {
 	HaloEnabled  bool   `json:"halo_enabled"`
-	HaloCycle    bool   `json:"halo_cycle"`
-	HaloDual     bool   `json:"halo_dual"`
+	HaloStyle    string `json:"halo_style"`
 	ShakeEnabled bool   `json:"shake_enabled"`
 	HaloColor    string `json:"halo_color"`
+	HaloColor2   string `json:"halo_color2"`
 	RingColor    string `json:"ring_color"`
 	HaloSize     int    `json:"halo_size"`
 	Sensitivity  int    `json:"sensitivity"`
@@ -47,12 +55,39 @@ type appConfig struct {
 func defaultConfig() appConfig {
 	return appConfig{
 		HaloEnabled:  true,
+		HaloStyle:    styleSolid,
 		ShakeEnabled: true,
 		HaloColor:    defaultHaloColor,
+		HaloColor2:   defaultHaloColor2,
 		RingColor:    defaultRingColor,
 		HaloSize:     defaultHaloSize,
 		Sensitivity:  defaultSensitivity,
 	}
+}
+
+func validStyle(s string) bool {
+	switch s {
+	case styleSolid, styleDual, styleSplit, styleCross, styleRainbow, stylePrism:
+		return true
+	}
+	return false
+}
+
+func migrateStyle(data []byte) string {
+	var legacy struct {
+		Cycle bool `json:"halo_cycle"`
+		Dual  bool `json:"halo_dual"`
+	}
+	json.Unmarshal(data, &legacy)
+	switch {
+	case legacy.Cycle && legacy.Dual:
+		return stylePrism
+	case legacy.Cycle:
+		return styleRainbow
+	case legacy.Dual:
+		return styleDual
+	}
+	return styleSolid
 }
 
 func parseColor(s string) (rgb, error) {
@@ -97,11 +132,17 @@ func loadConfig() appConfig {
 	c := defaultConfig()
 	if data, err := os.ReadFile(configPath()); err == nil {
 		json.Unmarshal(data, &c)
+		if !validStyle(c.HaloStyle) {
+			c.HaloStyle = migrateStyle(data)
+		}
 	}
 	c.HaloSize = clampInt(c.HaloSize, haloSizeMin, haloSizeMax)
 	c.Sensitivity = clampInt(c.Sensitivity, sensitivityMin, sensitivityMax)
 	if _, err := parseColor(c.HaloColor); err != nil {
 		c.HaloColor = defaultHaloColor
+	}
+	if _, err := parseColor(c.HaloColor2); err != nil {
+		c.HaloColor2 = defaultHaloColor2
 	}
 	if _, err := parseColor(c.RingColor); err != nil {
 		c.RingColor = defaultRingColor

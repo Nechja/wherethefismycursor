@@ -38,12 +38,14 @@ type drawKey struct {
 	gen    int
 	bucket int
 	hue    int
+	spin   int
 }
 
 var (
-	cfg     appConfig
-	haloRGB rgb
-	ringRGB rgb
+	cfg      appConfig
+	haloRGB  rgb
+	halo2RGB rgb
+	ringRGB  rgb
 
 	ov        *overlay
 	shake     = newShakeDetector()
@@ -65,6 +67,7 @@ var (
 
 func applyColors() {
 	haloRGB, _ = parseColor(cfg.HaloColor)
+	halo2RGB, _ = parseColor(cfg.HaloColor2)
 	ringRGB, _ = parseColor(cfg.RingColor)
 }
 
@@ -80,7 +83,7 @@ func quitApp() {
 func toggleHalo() {
 	cfg.HaloEnabled = !cfg.HaloEnabled
 	saveConfig()
-	syncSettingsControls()
+	invalidateSettings()
 }
 
 func onHotkey(id uintptr) {
@@ -113,8 +116,35 @@ func hueBucket(now float64) int {
 	return int((phase - math.Floor(phase)) * haloHueSteps)
 }
 
+func spinBucket(now float64) int {
+	phase := now * prismSpinHz
+	return int((phase - math.Floor(phase)) * spinSteps)
+}
+
+func haloCycles() bool {
+	return cfg.HaloStyle == styleRainbow
+}
+
+func haloHasRim() bool {
+	return cfg.HaloStyle == styleDual
+}
+
+func haloSpins() bool {
+	return cfg.HaloEnabled && cfg.HaloStyle == stylePrism
+}
+
+func haloSplitMode() splitMode {
+	switch cfg.HaloStyle {
+	case styleSplit:
+		return splitHorizontal
+	case styleCross:
+		return splitDiagonal
+	}
+	return splitNone
+}
+
 func haloDisplayColor(now float64, continuous bool) rgb {
-	if !cfg.HaloCycle {
+	if !haloCycles() {
 		return haloRGB
 	}
 	phase := now * haloCycleHz
@@ -163,9 +193,12 @@ func frame() {
 	setFrameInterval(frameIntervalActiveMs)
 
 	if !animating {
-		key := drawKey{gen: configGen, bucket: pulseBucket(now), hue: -1}
-		if cfg.HaloCycle {
+		key := drawKey{gen: configGen, bucket: pulseBucket(now), hue: -1, spin: -1}
+		if haloCycles() {
 			key.hue = hueBucket(now)
+		}
+		if haloSpins() {
+			key.spin = spinBucket(now)
 		}
 		if ov.shown && key == lastKey {
 			if pt != lastPt {
@@ -184,7 +217,8 @@ func frame() {
 		p.haloAlpha = 1
 		p.haloSize = float64(cfg.HaloSize)
 		p.haloColor = haloDisplayColor(now, animating)
-		p.haloDual = cfg.HaloDual
+		p.haloDual = haloHasRim()
+		p.haloColor2 = halo2RGB
 	}
 	if animating {
 		p.pulse = pulseAt(now)
@@ -200,14 +234,58 @@ func frame() {
 		p.pulse = bucketPulse(lastKey.bucket)
 	}
 
-	prof, ext, hole := buildProfile(p, ov.profBuf)
-	ov.profBuf = prof
+	if haloSpins() && p.haloAlpha > 0 {
+		renderSpin(p, pt, now, animating)
+		return
+	}
+
+	mode := splitNone
+	if cfg.HaloEnabled && p.haloAlpha > 0 {
+		mode = haloSplitMode()
+	}
+	top, ext, hole := buildProfile(p, ov.profBuf)
+	ov.profBuf = top
+	bottom := top
+	if mode != splitNone {
+		p2 := p
+		p2.haloColor = halo2RGB
+		bottom, _, _ = buildProfile(p2, ov.profBuf2)
+		ov.profBuf2 = bottom
+	}
 	if ext == 0 {
 		ov.hide()
 		return
 	}
 	ov.clearPrev()
-	ov.rasterize(prof, ext, hole)
+	ov.rasterize(top, bottom, ext, hole, mode)
+	ov.presentRect(pt.x, pt.y, ext)
+	lastPt = pt
+	lastExt = ext
+}
+
+func renderSpin(p effectParams, pt point, now float64, animating bool) {
+	phase := now * prismSpinHz
+	phase -= math.Floor(phase)
+	if !animating {
+		phase = (float64(spinBucket(now)) + 0.5) / spinSteps
+	}
+
+	var base []uint32
+	ext := 0
+	if p.ringElapsed >= 0 {
+		pr := p
+		pr.haloAlpha = 0
+		base, ext, _ = buildProfile(pr, ov.profBuf)
+		ov.profBuf = base
+	}
+	aMain, aRim, hExt := buildSpinProfiles(p, ov.spinMain, ov.spinRim)
+	ov.spinMain, ov.spinRim = aMain, aRim
+	if hExt > ext {
+		ext = hExt
+	}
+
+	ov.clearPrev()
+	rasterizeSpin(ov.buf32, overlaySize, overlayCenter, overlayCenter, base, aMain, aRim, ext, phase)
 	ov.presentRect(pt.x, pt.y, ext)
 	lastPt = pt
 	lastExt = ext
@@ -268,11 +346,6 @@ func runMessageLoop() {
 		r, _, _ := pGetMessageW.Call(uintptr(unsafe.Pointer(&msg)), 0, 0, 0)
 		if int32(r) <= 0 {
 			return
-		}
-		if settingsHwnd != 0 {
-			if handled, _, _ := pIsDialogMessageW.Call(settingsHwnd, uintptr(unsafe.Pointer(&msg))); handled != 0 {
-				continue
-			}
 		}
 		pTranslateMessage.Call(uintptr(unsafe.Pointer(&msg)))
 		pDispatchMessageW.Call(uintptr(unsafe.Pointer(&msg)))

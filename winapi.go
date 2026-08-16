@@ -15,6 +15,8 @@ var (
 	comctl32 = syscall.NewLazyDLL("comctl32.dll")
 	comdlg32 = syscall.NewLazyDLL("comdlg32.dll")
 	advapi32 = syscall.NewLazyDLL("advapi32.dll")
+	dwmapi   = syscall.NewLazyDLL("dwmapi.dll")
+	msimg32  = syscall.NewLazyDLL("msimg32.dll")
 
 	pRegisterClassExW              = user32.NewProc("RegisterClassExW")
 	pCreateWindowExW               = user32.NewProc("CreateWindowExW")
@@ -23,7 +25,6 @@ var (
 	pGetMessageW                   = user32.NewProc("GetMessageW")
 	pTranslateMessage              = user32.NewProc("TranslateMessage")
 	pDispatchMessageW              = user32.NewProc("DispatchMessageW")
-	pIsDialogMessageW              = user32.NewProc("IsDialogMessageW")
 	pUpdateLayeredWindow           = user32.NewProc("UpdateLayeredWindow")
 	pShowWindow                    = user32.NewProc("ShowWindow")
 	pSetWindowPos                  = user32.NewProc("SetWindowPos")
@@ -31,7 +32,6 @@ var (
 	pPostQuitMessage               = user32.NewProc("PostQuitMessage")
 	pPostMessageW                  = user32.NewProc("PostMessageW")
 	pSendMessageW                  = user32.NewProc("SendMessageW")
-	pSetWindowTextW                = user32.NewProc("SetWindowTextW")
 	pSetForegroundWindow           = user32.NewProc("SetForegroundWindow")
 	pCreatePopupMenu               = user32.NewProc("CreatePopupMenu")
 	pAppendMenuW                   = user32.NewProc("AppendMenuW")
@@ -47,14 +47,36 @@ var (
 	pGetDC                         = user32.NewProc("GetDC")
 	pSetProcessDpiAwarenessContext = user32.NewProc("SetProcessDpiAwarenessContext")
 	pSetProcessDPIAware            = user32.NewProc("SetProcessDPIAware")
+	pBeginPaint                    = user32.NewProc("BeginPaint")
+	pEndPaint                      = user32.NewProc("EndPaint")
+	pDrawTextW                     = user32.NewProc("DrawTextW")
+	pFillRect                      = user32.NewProc("FillRect")
+	pSetCapture                    = user32.NewProc("SetCapture")
+	pReleaseCapture                = user32.NewProc("ReleaseCapture")
+	pTrackMouseEvent               = user32.NewProc("TrackMouseEvent")
+	pLoadCursorW                   = user32.NewProc("LoadCursorW")
+	pSetCursor                     = user32.NewProc("SetCursor")
 
-	pCreateCompatibleDC = gdi32.NewProc("CreateCompatibleDC")
-	pCreateDIBSection   = gdi32.NewProc("CreateDIBSection")
-	pSelectObject       = gdi32.NewProc("SelectObject")
-	pCreateSolidBrush   = gdi32.NewProc("CreateSolidBrush")
-	pCreateBitmap       = gdi32.NewProc("CreateBitmap")
-	pDeleteObject       = gdi32.NewProc("DeleteObject")
-	pCreateFontW        = gdi32.NewProc("CreateFontW")
+	pCreateCompatibleDC     = gdi32.NewProc("CreateCompatibleDC")
+	pCreateCompatibleBitmap = gdi32.NewProc("CreateCompatibleBitmap")
+	pCreateDIBSection       = gdi32.NewProc("CreateDIBSection")
+	pSelectObject           = gdi32.NewProc("SelectObject")
+	pCreateSolidBrush       = gdi32.NewProc("CreateSolidBrush")
+	pCreateBitmap           = gdi32.NewProc("CreateBitmap")
+	pDeleteObject           = gdi32.NewProc("DeleteObject")
+	pCreateFontW            = gdi32.NewProc("CreateFontW")
+	pCreatePen              = gdi32.NewProc("CreatePen")
+	pRoundRect              = gdi32.NewProc("RoundRect")
+	pEllipse                = gdi32.NewProc("Ellipse")
+	pBitBlt                 = gdi32.NewProc("BitBlt")
+	pSetTextColor           = gdi32.NewProc("SetTextColor")
+	pSetBkMode              = gdi32.NewProc("SetBkMode")
+	pGetStockObject         = gdi32.NewProc("GetStockObject")
+	pTextOutW               = gdi32.NewProc("TextOutW")
+	pGetTextExtentPoint32W  = gdi32.NewProc("GetTextExtentPoint32W")
+	pArc                    = gdi32.NewProc("Arc")
+	pSetStretchBltMode      = gdi32.NewProc("SetStretchBltMode")
+	pSetBrushOrgEx          = gdi32.NewProc("SetBrushOrgEx")
 
 	pGetModuleHandleW = kernel32.NewProc("GetModuleHandleW")
 	pCreateMutexW     = kernel32.NewProc("CreateMutexW")
@@ -72,6 +94,10 @@ var (
 	pRegDeleteValueW  = advapi32.NewProc("RegDeleteValueW")
 	pRegQueryValueExW = advapi32.NewProc("RegQueryValueExW")
 	pRegCloseKey      = advapi32.NewProc("RegCloseKey")
+
+	pDwmSetWindowAttribute = dwmapi.NewProc("DwmSetWindowAttribute")
+
+	pAlphaBlend = msimg32.NewProc("AlphaBlend")
 )
 
 const (
@@ -80,9 +106,6 @@ const (
 	wsCaption     = 0x00C00000
 	wsSysMenu     = 0x00080000
 	wsMinimizeBox = 0x00020000
-	wsChild       = 0x40000000
-	wsVisible     = 0x10000000
-	wsTabStop     = 0x00010000
 
 	wsExLayered     = 0x00080000
 	wsExTransparent = 0x00000020
@@ -95,21 +118,22 @@ const (
 	swShow           = 5
 	swShowNoActivate = 4
 
-	wmNull           = 0x0000
-	wmDestroy        = 0x0002
-	wmClose          = 0x0010
-	wmQuit           = 0x0012
-	wmSetFont        = 0x0030
-	wmSetIcon        = 0x0080
-	wmCommand        = 0x0111
-	wmTimer          = 0x0113
-	wmHScroll        = 0x0114
-	wmCtlColorStatic = 0x0138
-	wmLButtonDblClk  = 0x0203
-	wmRButtonUp      = 0x0205
-	wmHotkey         = 0x0312
-	wmUser           = 0x0400
-	wmApp            = 0x8000
+	wmNull          = 0x0000
+	wmDestroy       = 0x0002
+	wmPaint         = 0x000F
+	wmClose         = 0x0010
+	wmEraseBkgnd    = 0x0014
+	wmSetCursor     = 0x0020
+	wmSetIcon       = 0x0080
+	wmTimer         = 0x0113
+	wmMouseMove     = 0x0200
+	wmLButtonDown   = 0x0201
+	wmLButtonUp     = 0x0202
+	wmLButtonDblClk = 0x0203
+	wmRButtonUp     = 0x0205
+	wmMouseLeave    = 0x02A3
+	wmHotkey        = 0x0312
+	wmApp           = 0x8000
 
 	modAlt      = 0x0001
 	modControl  = 0x0002
@@ -126,23 +150,6 @@ const (
 	swpNoZOrder   = 0x0004
 	swpNoActivate = 0x0010
 
-	clsButton   = "BUTTON"
-	clsStatic   = "STATIC"
-	clsTrackbar = "msctls_trackbar32"
-
-	bsAutoCheckbox = 0x0003
-	bmSetCheck     = 0x00F1
-	bmGetCheck     = 0x00F0
-	bstChecked     = 1
-
-	ssSunken = 0x1000
-
-	tbmGetPos      = wmUser + 0
-	tbmSetPos      = wmUser + 5
-	tbmSetRangeMin = wmUser + 7
-	tbmSetRangeMax = wmUser + 8
-
-	iccBarClasses      = 0x0004
 	iccStandardClasses = 0x4000
 
 	nimAdd     = 0
@@ -172,14 +179,31 @@ const (
 	smCxScreen = 0
 	smCyScreen = 1
 
-	colorBtnFace = 15
-
 	iconSmall = 0
 	iconBig   = 1
 
 	defaultCharset   = 1
 	cleartypeQuality = 5
-	fontWeightNormal = 400
+
+	dtCenter     = 0x0001
+	dtRight      = 0x0002
+	dtVCenter    = 0x0004
+	dtSingleLine = 0x0020
+
+	bkTransparent = 1
+	penSolid      = 0
+	nullPen       = 8
+	srcCopy       = 0x00CC0020
+	halftone      = 4
+
+	blendPremult = uintptr(255)<<16 | uintptr(acSrcAlpha)<<24
+
+	tmeLeave = 0x0002
+
+	idcArrow = 32512
+	idcHand  = 32649
+
+	dwmDarkModeAttr = 20
 
 	invalidHandle      = ^uintptr(0)
 	dpiCtxPerMonitorV2 = ^uintptr(3)
@@ -292,6 +316,22 @@ type actCtx struct {
 	hModule                uintptr
 }
 
+type paintStruct struct {
+	hdc         uintptr
+	fErase      int32
+	rcPaint     rect
+	fRestore    int32
+	fIncUpdate  int32
+	rgbReserved [32]byte
+}
+
+type trackMouseEventT struct {
+	cbSize      uint32
+	dwFlags     uint32
+	hwndTrack   uintptr
+	dwHoverTime uint32
+}
+
 func utf16Ptr(s string) *uint16 {
 	p, _ := syscall.UTF16PtrFromString(s)
 	return p
@@ -309,7 +349,9 @@ func fromColorref(v uint32) rgb {
 	return rgb{uint8(v), uint8(v >> 8), uint8(v >> 16)}
 }
 
-func loWord(v uintptr) int { return int(v & 0xffff) }
+func mouseXY(lParam uintptr) (int32, int32) {
+	return int32(int16(lParam & 0xffff)), int32(int16((lParam >> 16) & 0xffff))
+}
 
 func setDPIAware() {
 	if pSetProcessDpiAwarenessContext.Find() == nil {
@@ -341,7 +383,7 @@ func enableVisualStyles(manifestPath string) {
 	}
 	icc := initCommonControlsExT{
 		dwSize: uint32(unsafe.Sizeof(initCommonControlsExT{})),
-		dwICC:  iccBarClasses | iccStandardClasses,
+		dwICC:  iccStandardClasses,
 	}
 	pInitCommonControlsEx.Call(uintptr(unsafe.Pointer(&icc)))
 }

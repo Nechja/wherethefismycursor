@@ -42,6 +42,10 @@ const (
 	haloRimWidthFactor  = 0.7
 	haloRimAlpha        = 0.6
 
+	prismSpinHz = 0.25
+	spinSteps   = 48
+	hueSteps    = 64
+
 	gaussCutoffSigmas = 3.5
 	profileScale      = 8
 
@@ -113,8 +117,39 @@ type overlay struct {
 	buf32    []uint32
 	zero32   []uint32
 	profBuf  []uint32
+	profBuf2 []uint32
+	spinMain []uint8
+	spinRim  []uint8
 	prevExt  int
 	shown    bool
+}
+
+var hueLUT [hueSteps]rgb
+
+func init() {
+	for i := range hueLUT {
+		hueLUT[i] = cycleColor(float64(i) / hueSteps)
+	}
+}
+
+func createCanvas(refDC uintptr, size int) (uintptr, []uint32, error) {
+	memDC, _, _ := pCreateCompatibleDC.Call(refDC)
+	bmi := bitmapInfoHeader{
+		size:     uint32(unsafe.Sizeof(bitmapInfoHeader{})),
+		width:    int32(size),
+		height:   -int32(size),
+		planes:   1,
+		bitCount: 32,
+	}
+	var bits unsafe.Pointer
+	hbm, _, err := pCreateDIBSection.Call(refDC,
+		uintptr(unsafe.Pointer(&bmi)), 0,
+		uintptr(unsafe.Pointer(&bits)), 0, 0)
+	if hbm == 0 || bits == nil {
+		return 0, nil, fmt.Errorf("CreateDIBSection: %v", err)
+	}
+	pSelectObject.Call(memDC, hbm)
+	return memDC, unsafe.Slice((*uint32)(bits), size*size), nil
 }
 
 func newOverlay(wndProc uintptr) (*overlay, error) {
@@ -142,29 +177,16 @@ func newOverlay(wndProc uintptr) (*overlay, error) {
 	}
 
 	screenDC, _, _ := pGetDC.Call(0)
-	memDC, _, _ := pCreateCompatibleDC.Call(screenDC)
-
-	bmi := bitmapInfoHeader{
-		size:     uint32(unsafe.Sizeof(bitmapInfoHeader{})),
-		width:    overlaySize,
-		height:   -overlaySize,
-		planes:   1,
-		bitCount: 32,
+	memDC, buf32, err := createCanvas(screenDC, overlaySize)
+	if err != nil {
+		return nil, err
 	}
-	var bits unsafe.Pointer
-	hbm, _, err := pCreateDIBSection.Call(screenDC,
-		uintptr(unsafe.Pointer(&bmi)), 0,
-		uintptr(unsafe.Pointer(&bits)), 0, 0)
-	if hbm == 0 || bits == nil {
-		return nil, fmt.Errorf("CreateDIBSection: %v", err)
-	}
-	pSelectObject.Call(memDC, hbm)
 
 	return &overlay{
 		hwnd:     hwnd,
 		screenDC: screenDC,
 		memDC:    memDC,
-		buf32:    unsafe.Slice((*uint32)(bits), overlaySize*overlaySize),
+		buf32:    buf32,
 		zero32:   make([]uint32, overlaySize),
 	}, nil
 }
@@ -181,35 +203,87 @@ func (o *overlay) clearPrev() {
 	}
 }
 
-func (o *overlay) rasterize(prof []uint32, ext int, hole float64) {
-	maxIdx := len(prof) - 1
+type splitMode int
+
+const (
+	splitNone splitMode = iota
+	splitHorizontal
+	splitDiagonal
+)
+
+func (o *overlay) rasterize(a, b []uint32, ext int, hole float64, mode splitMode) {
+	rasterizeRadial(o.buf32, overlaySize, overlayCenter, overlayCenter, a, b, ext, hole, mode)
+}
+
+func rasterizeRadial(buf []uint32, stride, cx, cy int, a, b []uint32, ext int, hole float64, mode splitMode) {
 	extSq := float64(ext) * float64(ext)
 	holeSq := hole * hole
 	for dy := -ext; dy <= ext; dy++ {
+		rowProf := a
+		if mode == splitHorizontal && dy >= 0 {
+			rowProf = b
+		}
+		ady := dy
+		if ady < 0 {
+			ady = -ady
+		}
 		dySq := float64(dy) * float64(dy)
 		chord := int(math.Sqrt(extSq - dySq))
 		holeChord := 0
 		if holeSq > dySq {
 			holeChord = int(math.Sqrt(holeSq - dySq))
 		}
-		row := (overlayCenter + dy) * overlaySize
+		row := (cy+dy)*stride + cx
 		if holeChord > 0 {
-			o.span(prof, maxIdx, row, dySq, -chord, -holeChord)
-			o.span(prof, maxIdx, row, dySq, holeChord, chord)
+			emitSpan(buf, a, b, rowProf, mode, row, dySq, ady, -chord, -holeChord)
+			emitSpan(buf, a, b, rowProf, mode, row, dySq, ady, holeChord, chord)
 		} else {
-			o.span(prof, maxIdx, row, dySq, -chord, chord)
+			emitSpan(buf, a, b, rowProf, mode, row, dySq, ady, -chord, chord)
 		}
 	}
 }
 
-func (o *overlay) span(prof []uint32, maxIdx, row int, dySq float64, x0, x1 int) {
+func emitSpan(buf, a, b, rowProf []uint32, mode splitMode, row int, dySq float64, ady, x0, x1 int) {
+	if mode != splitDiagonal {
+		radialSpan(buf, rowProf, row, dySq, x0, x1)
+		return
+	}
+	if x0 <= -ady {
+		hi := x1
+		if hi > -ady {
+			hi = -ady
+		}
+		radialSpan(buf, a, row, dySq, x0, hi)
+	}
+	lo := x0
+	if lo < -ady+1 {
+		lo = -ady + 1
+	}
+	hi := x1
+	if hi > ady-1 {
+		hi = ady - 1
+	}
+	if lo <= hi {
+		radialSpan(buf, b, row, dySq, lo, hi)
+	}
+	if x1 >= ady {
+		lo = x0
+		if lo < ady {
+			lo = ady
+		}
+		radialSpan(buf, a, row, dySq, lo, x1)
+	}
+}
+
+func radialSpan(buf, prof []uint32, row int, dySq float64, x0, x1 int) {
+	maxIdx := len(prof) - 1
 	for dx := x0; dx <= x1; dx++ {
 		dxF := float64(dx)
 		idx := int(math.Sqrt(dySq+dxF*dxF) * profileScale)
 		if idx > maxIdx {
 			idx = maxIdx
 		}
-		o.buf32[row+overlayCenter+dx] = prof[idx]
+		buf[row+dx] = prof[idx]
 	}
 }
 
@@ -315,14 +389,98 @@ func ringsAt(elapsed float64) []activeRing {
 	return rings
 }
 
-func complement(c rgb) rgb {
-	return rgb{255 - c.r, 255 - c.g, 255 - c.b}
+func buildSpinProfiles(p effectParams, mainBuf, rimBuf []uint8) ([]uint8, []uint8, int) {
+	haloR := p.haloSize * (1 + haloPulseGrowth*p.pulse)
+	sigma := math.Max(haloWidthMin, p.haloSize*haloWidthFactor)
+	core := p.haloSize * haloCoreFactor
+	gain := p.haloAlpha * (haloMinBrightness + (1-haloMinBrightness)*p.pulse)
+	rimR := haloR + sigma*haloRimOffsetSigmas
+	rimSigma := sigma * haloRimWidthFactor
+	ext := clampExtent(int(rimR+rimSigma*gaussCutoffSigmas+2) + 1)
+
+	n := ext*profileScale + 2
+	if cap(mainBuf) < n {
+		mainBuf = make([]uint8, n)
+	}
+	if cap(rimBuf) < n {
+		rimBuf = make([]uint8, n)
+	}
+	aMain := mainBuf[:n]
+	aRim := rimBuf[:n]
+	for i := range aMain {
+		d := float64(i) / profileScale
+		am := gain * (haloRingAlpha*gauss(d-haloR, sigma) + haloCoreAlpha*gauss(d, core))
+		aMain[i] = uint8(sat255(am * 255))
+		aRim[i] = uint8(sat255(gain * haloRimAlpha * gauss(d-rimR, rimSigma) * 255))
+	}
+	return aMain, aRim, ext
+}
+
+func addSat32(pix, b, g, r, a uint32) uint32 {
+	b += pix & 0xFF
+	g += (pix >> 8) & 0xFF
+	r += (pix >> 16) & 0xFF
+	a += (pix >> 24) & 0xFF
+	if b > 255 {
+		b = 255
+	}
+	if g > 255 {
+		g = 255
+	}
+	if r > 255 {
+		r = 255
+	}
+	if a > 255 {
+		a = 255
+	}
+	return b | g<<8 | r<<16 | a<<24
+}
+
+func rasterizeSpin(buf []uint32, stride, cx, cy int, base []uint32, aMain, aRim []uint8, ext int, phase float64) {
+	extSq := float64(ext) * float64(ext)
+	aMax := len(aMain) - 1
+	bMax := len(base) - 1
+	for dy := -ext; dy <= ext; dy++ {
+		dyF := float64(dy)
+		dySq := dyF * dyF
+		chord := int(math.Sqrt(extSq - dySq))
+		row := (cy+dy)*stride + cx
+		for dx := -chord; dx <= chord; dx++ {
+			dxF := float64(dx)
+			idx := int(math.Sqrt(dySq+dxF*dxF) * profileScale)
+			ai := idx
+			if ai > aMax {
+				ai = aMax
+			}
+			am := uint32(aMain[ai])
+			ar := uint32(aRim[ai])
+			var pix uint32
+			if bMax >= 0 {
+				bi := idx
+				if bi > bMax {
+					bi = bMax
+				}
+				pix = base[bi]
+			}
+			if am|ar != 0 {
+				h := int((math.Atan2(dyF, dxF)/(2*math.Pi)+phase+1)*hueSteps) & (hueSteps - 1)
+				c1 := hueLUT[h]
+				c2 := hueLUT[(h+hueSteps/2)&(hueSteps-1)]
+				bb := (am*uint32(c1.b) + ar*uint32(c2.b)) / 255
+				gg := (am*uint32(c1.g) + ar*uint32(c2.g)) / 255
+				rr := (am*uint32(c1.r) + ar*uint32(c2.r)) / 255
+				pix = addSat32(pix, bb, gg, rr, am+ar)
+			}
+			buf[row+dx] = pix
+		}
+	}
 }
 
 type effectParams struct {
 	haloAlpha   float64
 	haloSize    float64
 	haloColor   rgb
+	haloColor2  rgb
 	haloDual    bool
 	pulse       float64
 	ringElapsed float64
@@ -332,7 +490,7 @@ type effectParams struct {
 func buildProfile(p effectParams, buf []uint32) (prof []uint32, ext int, hole float64) {
 	var haloR, haloSigma, haloCore, haloGain float64
 	var rimR, rimSigma float64
-	rimColor := complement(p.haloColor)
+	rimColor := p.haloColor2
 	outer := 0.0
 	hole = math.Inf(1)
 	if p.haloAlpha > 0 {
