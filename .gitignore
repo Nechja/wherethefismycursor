@@ -1,1 +1,10 @@
 *.exe
+*.test
+*.test.exe
+coverage.out
+*.coverprofile
+*.prof
+*.pprof
+Thumbs.db
+Desktop.ini
+.DS_Store
