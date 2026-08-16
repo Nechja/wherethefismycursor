@@ -64,10 +64,12 @@ const (
 	uiKnobR    = 7
 	uiValueW   = 64
 
-	cardW    = 51
-	cardGap  = 6
-	cardH    = 58
-	cardPrev = 36
+	cardW       = 78
+	cardGap     = 8
+	cardH       = 58
+	cardRowGap  = 8
+	cardsPerRow = 4
+	cardPrev    = 36
 
 	miniCanvas   = 128
 	miniHaloSize = 22.0
@@ -82,6 +84,7 @@ const (
 
 	lblSolidCard   = "SOLID"
 	lblDualCard    = "DUAL"
+	lblCompactCard = "COMPACT"
 	lblSplitCard   = "SPLIT"
 	lblCrossCard   = "CROSS"
 	lblRainbowCard = "RAINBOW"
@@ -175,24 +178,29 @@ func buildWidgets() int {
 	cards := []struct{ style, caption string }{
 		{styleSolid, lblSolidCard},
 		{styleDual, lblDualCard},
+		{styleCompact, lblCompactCard},
 		{styleSplit, lblSplitCard},
 		{styleCross, lblCrossCard},
 		{styleRainbow, lblRainbowCard},
 		{stylePrism, lblPrismCard},
 	}
 	for i, c := range cards {
-		add(widget{kind: wCard, x: uiMargin + i*(cardW+cardGap), y: y, w: cardW, h: cardH,
+		col := i % cardsPerRow
+		add(widget{kind: wCard,
+			x: uiMargin + col*(cardW+cardGap), y: y + (i/cardsPerRow)*(cardH+cardRowGap),
+			w: cardW, h: cardH,
 			label: c.caption, style: c.style, dim: haloOff, wake: wakeHalo})
 	}
-	y += cardH + uiGap
+	cardRows := (len(cards) + cardsPerRow - 1) / cardsPerRow
+	y += cardRows*(cardH+cardRowGap) - cardRowGap + uiGap
 	add(widget{kind: wLabel, x: uiMargin, y: y, w: 120, h: uiSwatchH, label: lblColors, dim: haloOff})
 	add(widget{kind: wLabel, x: uiClientW - uiMargin - 120, y: y, w: 120, h: uiSwatchH,
 		label: lblAutoCycle, muted: true, textFlags: dtRight,
 		dim: haloOff, visible: forStyles(styleRainbow, stylePrism)})
 	for _, sw := range []widget{
-		haloSwatch(2, lblMainCap, &cfg.HaloColor, forStyles(styleSolid, styleDual, styleCross)),
+		haloSwatch(2, lblMainCap, &cfg.HaloColor, forStyles(styleSolid, styleDual, styleCross, styleCompact)),
 		haloSwatch(1, lblRimCap, &cfg.HaloColor2, forStyles(styleDual)),
-		haloSwatch(1, lblAltCap, &cfg.HaloColor2, forStyles(styleCross)),
+		haloSwatch(1, lblAltCap, &cfg.HaloColor2, forStyles(styleCross, styleCompact)),
 		haloSwatch(2, lblTopCap, &cfg.HaloColor, forStyles(styleSplit)),
 		haloSwatch(1, lblBottomCap, &cfg.HaloColor2, forStyles(styleSplit)),
 	} {
@@ -290,7 +298,9 @@ func drawMiniHalo(dc uintptr, dst rect, style string, dim bool) {
 	clearMini()
 	p := effectParams{
 		haloAlpha: 1, haloSize: miniHaloSize, pulse: 0.6,
-		haloColor: main, haloColor2: second, haloDual: style == styleDual, ringElapsed: -1,
+		haloColor: main, haloColor2: second,
+		haloDual: style == styleDual, haloCompact: style == styleCompact,
+		ringElapsed: -1,
 	}
 	mode := splitNone
 	switch style {
@@ -364,7 +374,7 @@ func drawCard(dc uintptr, w *widget, hot bool) {
 	cx := (pv.left + pv.right) / 2
 	cy := (pv.top + pv.bottom) / 2
 	switch w.style {
-	case styleSolid, styleDual, styleSplit, styleCross:
+	case styleSolid, styleDual, styleCompact, styleSplit, styleCross:
 		drawMiniHalo(dc, pv, w.style, dim)
 	case styleRainbow:
 		drawRainbowRing(dc, cx, cy, sci(12), sci(4), 0, dim)

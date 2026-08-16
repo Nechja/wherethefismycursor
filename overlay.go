@@ -46,6 +46,13 @@ const (
 	spinSteps   = 48
 	hueSteps    = 64
 
+	compactHoleFactor         = 0.48
+	compactMidFactor          = 0.78
+	compactOutlineWidthFactor = 0.02
+	compactOutlineWidthMin    = 1.0
+	compactAlpha              = 0.95
+	compactEdgePx             = 1.0
+
 	gaussCutoffSigmas = 3.5
 	profileScale      = 8
 
@@ -482,9 +489,42 @@ type effectParams struct {
 	haloColor   rgb
 	haloColor2  rgb
 	haloDual    bool
+	haloCompact bool
 	pulse       float64
 	ringElapsed float64
 	ringColor   rgb
+}
+
+func clamp01(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
+}
+
+func compactSample(p effectParams, d float64) (b, g, r, a float64) {
+	holeR := p.haloSize * compactHoleFactor
+	midR := p.haloSize * compactMidFactor
+	outR := p.haloSize
+	ow := math.Max(compactOutlineWidthMin, p.haloSize*compactOutlineWidthFactor)
+
+	innerBand := clamp01((d-holeR)/compactEdgePx) * clamp01((midR-d)/compactEdgePx)
+	outerBand := clamp01((d-midR)/compactEdgePx) * clamp01((outR-d)/compactEdgePx)
+	outline := 0.0
+	for _, edge := range [3]float64{holeR, midR, outR} {
+		outline = math.Max(outline, clamp01((ow-math.Abs(d-edge))/compactEdgePx))
+	}
+	fill := 1 - outline
+
+	gain := compactAlpha * p.haloAlpha
+	b = gain * fill * (innerBand*float64(p.haloColor2.b) + outerBand*float64(p.haloColor.b))
+	g = gain * fill * (innerBand*float64(p.haloColor2.g) + outerBand*float64(p.haloColor.g))
+	r = gain * fill * (innerBand*float64(p.haloColor2.r) + outerBand*float64(p.haloColor.r))
+	a = gain * 255 * (outline + fill*(innerBand+outerBand))
+	return
 }
 
 func buildProfile(p effectParams, buf []uint32) (prof []uint32, ext int, hole float64) {
@@ -494,17 +534,23 @@ func buildProfile(p effectParams, buf []uint32) (prof []uint32, ext int, hole fl
 	outer := 0.0
 	hole = math.Inf(1)
 	if p.haloAlpha > 0 {
-		haloR = p.haloSize * (1 + haloPulseGrowth*p.pulse)
-		haloSigma = math.Max(haloWidthMin, p.haloSize*haloWidthFactor)
-		haloCore = p.haloSize * haloCoreFactor
 		haloGain = p.haloAlpha * (haloMinBrightness + (1-haloMinBrightness)*p.pulse)
-		outer = haloR + haloSigma*gaussCutoffSigmas + 2
-		if p.haloDual {
-			rimR = haloR + haloSigma*haloRimOffsetSigmas
-			rimSigma = haloSigma * haloRimWidthFactor
-			outer = rimR + rimSigma*gaussCutoffSigmas + 2
-		}
 		hole = 0
+		if p.haloCompact {
+			ow := math.Max(compactOutlineWidthMin, p.haloSize*compactOutlineWidthFactor)
+			outer = p.haloSize + ow + compactEdgePx + 2
+			hole = math.Max(0, p.haloSize*compactHoleFactor-ow-compactEdgePx)
+		} else {
+			haloR = p.haloSize * (1 + haloPulseGrowth*p.pulse)
+			haloSigma = math.Max(haloWidthMin, p.haloSize*haloWidthFactor)
+			haloCore = p.haloSize * haloCoreFactor
+			outer = haloR + haloSigma*gaussCutoffSigmas + 2
+			if p.haloDual {
+				rimR = haloR + haloSigma*haloRimOffsetSigmas
+				rimSigma = haloSigma * haloRimWidthFactor
+				outer = rimR + rimSigma*gaussCutoffSigmas + 2
+			}
+		}
 	}
 	var rings []activeRing
 	if p.ringElapsed >= 0 {
@@ -529,22 +575,30 @@ func buildProfile(p effectParams, buf []uint32) (prof []uint32, ext int, hole fl
 	prof = buf[:n]
 	for i := range prof {
 		d := float64(i) / profileScale
-		ah := 0.0
-		rim := 0.0
+		var cb, cg, cr, ca float64
 		if p.haloAlpha > 0 {
-			ah = haloGain * (haloRingAlpha*gauss(d-haloR, haloSigma) + haloCoreAlpha*gauss(d, haloCore))
-			if p.haloDual {
-				rim = haloGain * haloRimAlpha * gauss(d-rimR, rimSigma)
+			if p.haloCompact {
+				cb, cg, cr, ca = compactSample(p, d)
+			} else {
+				ah := haloGain * (haloRingAlpha*gauss(d-haloR, haloSigma) + haloCoreAlpha*gauss(d, haloCore))
+				rim := 0.0
+				if p.haloDual {
+					rim = haloGain * haloRimAlpha * gauss(d-rimR, rimSigma)
+				}
+				cb = ah*float64(p.haloColor.b) + rim*float64(rimColor.b)
+				cg = ah*float64(p.haloColor.g) + rim*float64(rimColor.g)
+				cr = ah*float64(p.haloColor.r) + rim*float64(rimColor.r)
+				ca = (ah + rim) * 255
 			}
 		}
 		ar := 0.0
 		for _, rg := range rings {
 			ar += rg.amp * gauss(d-rg.r, rg.sigma)
 		}
-		b := sat255(ah*float64(p.haloColor.b) + rim*float64(rimColor.b) + ar*float64(p.ringColor.b))
-		g := sat255(ah*float64(p.haloColor.g) + rim*float64(rimColor.g) + ar*float64(p.ringColor.g))
-		r := sat255(ah*float64(p.haloColor.r) + rim*float64(rimColor.r) + ar*float64(p.ringColor.r))
-		a := sat255((ah + rim + ar) * 255)
+		b := sat255(cb + ar*float64(p.ringColor.b))
+		g := sat255(cg + ar*float64(p.ringColor.g))
+		r := sat255(cr + ar*float64(p.ringColor.r))
+		a := sat255(ca + ar*255)
 		prof[i] = b | g<<8 | r<<16 | a<<24
 	}
 	return prof, ext, hole

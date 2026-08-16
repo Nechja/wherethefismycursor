@@ -19,6 +19,7 @@ const (
 
 	styleSolid   = "solid"
 	styleDual    = "dual"
+	styleCompact = "compact"
 	styleSplit   = "split"
 	styleCross   = "cross"
 	styleRainbow = "rainbow"
@@ -67,7 +68,7 @@ func defaultConfig() appConfig {
 
 func validStyle(s string) bool {
 	switch s {
-	case styleSolid, styleDual, styleSplit, styleCross, styleRainbow, stylePrism:
+	case styleSolid, styleDual, styleCompact, styleSplit, styleCross, styleRainbow, stylePrism:
 		return true
 	}
 	return false

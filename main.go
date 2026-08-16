@@ -220,6 +220,7 @@ func frame() {
 		p.haloSize = float64(cfg.HaloSize)
 		p.haloColor = haloDisplayColor(now, animating)
 		p.haloDual = haloHasRim()
+		p.haloCompact = cfg.HaloStyle == styleCompact
 		p.haloColor2 = halo2RGB
 	}
 	if animating {
