@@ -304,6 +304,9 @@ func appWndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 	case wmHotkey:
 		onHotkey(wParam)
 		return 0
+	case wmAppUpdateChecked:
+		invalidateSettings()
+		return 0
 	case wmDestroy:
 		pPostQuitMessage.Call(0)
 		return 0
@@ -388,6 +391,7 @@ func main() {
 
 	registerHotkeys()
 	setFrameInterval(frameIntervalActiveMs)
+	startUpdateChecker()
 
 	runMessageLoop()
 }

@@ -21,6 +21,7 @@ const (
 	wButton
 	wToggle
 	wFooter
+	wVersion
 )
 
 type widget struct {
@@ -102,6 +103,7 @@ const (
 	lblSensFmt    = "%d / 10"
 	lblTestButton = "TEST RINGS"
 	lblHotkeys    = "Ctrl+Alt+F find   Ctrl+Alt+H halo   Ctrl+Alt+Q quit"
+	lblUpdateFmt  = "%s  ·  get %s on GitHub"
 )
 
 var (
@@ -228,7 +230,9 @@ func buildWidgets() int {
 	y += uiRowH + 8
 
 	add(widget{kind: wFooter, x: uiMargin, y: y, w: rowW, h: 16, label: lblHotkeys})
-	return y + 16 + 12
+	y += 16 + 4
+	add(widget{kind: wVersion, x: uiMargin, y: y, w: rowW, h: 14})
+	return y + 14 + 10
 }
 
 func drawTitle(dc uintptr, w *widget) {
@@ -471,6 +475,17 @@ func renderSettings(dc uintptr) {
 			drawButton(dc, w, hot)
 		case wFooter:
 			drawText(dc, wrect(w), w.label, smallFont, uiTextDim, dtSingleLine|dtCenter)
+		case wVersion:
+			if tag, ok := newerVersion(); ok {
+				c := uiAccent
+				if hot {
+					c = uiKnob
+				}
+				drawText(dc, wrect(w), fmt.Sprintf(lblUpdateFmt, appVersion, tag), smallFont, c,
+					dtSingleLine|dtCenter)
+			} else {
+				drawText(dc, wrect(w), appVersion, smallFont, uiTextDim, dtSingleLine|dtCenter)
+			}
 		}
 	}
 }
@@ -482,6 +497,10 @@ func widgetAt(mx, my int32) int {
 		case wCard, wToggle, wSwatch, wSlider, wButton:
 		case wHeader:
 			if w.set == nil {
+				continue
+			}
+		case wVersion:
+			if _, ok := newerVersion(); !ok {
 				continue
 			}
 		default:
@@ -551,6 +570,8 @@ func settingsMouseDown(mx, my int32) {
 		editColor(w.hex)
 	case wButton:
 		w.onClick()
+	case wVersion:
+		openReleasesPage()
 	case wSlider:
 		runWake(w)
 		dragIdx = i

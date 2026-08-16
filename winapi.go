@@ -84,6 +84,7 @@ var (
 	pActivateActCtx   = kernel32.NewProc("ActivateActCtx")
 
 	pShellNotifyIconW = shell32.NewProc("Shell_NotifyIconW")
+	pShellExecuteW    = shell32.NewProc("ShellExecuteW")
 
 	pInitCommonControlsEx = comctl32.NewProc("InitCommonControlsEx")
 

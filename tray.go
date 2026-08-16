@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"math"
 	"syscall"
 	"unsafe"
@@ -16,8 +17,11 @@ const (
 	cmdHalo
 	cmdShake
 	cmdAutostart
+	cmdUpdate
 	cmdQuit
 )
+
+const lblTrayUpdateFmt = "Get %s on GitHub"
 
 const (
 	iconSize       = 32
@@ -94,7 +98,7 @@ func onTrayMessage(lParam uintptr) {
 func trayMenuItems() []trayMenuItem {
 	haloChecked := func() bool { return cfg.HaloEnabled }
 	shakeChecked := func() bool { return cfg.ShakeEnabled }
-	return []trayMenuItem{
+	items := []trayMenuItem{
 		{id: cmdSettings, label: "Settings…"},
 		{id: cmdFire, label: "Find my cursor now\tCtrl+Alt+F"},
 		{sep: true},
@@ -102,9 +106,12 @@ func trayMenuItems() []trayMenuItem {
 		{id: cmdShake, label: "Shake to find", checked: shakeChecked},
 		{sep: true},
 		{id: cmdAutostart, label: "Start with Windows", checked: autostartEnabled},
-		{sep: true},
-		{id: cmdQuit, label: "Quit\tCtrl+Alt+Q"},
 	}
+	if tag, ok := newerVersion(); ok {
+		items = append(items, trayMenuItem{sep: true},
+			trayMenuItem{id: cmdUpdate, label: fmt.Sprintf(lblTrayUpdateFmt, tag)})
+	}
+	return append(items, trayMenuItem{sep: true}, trayMenuItem{id: cmdQuit, label: "Quit\tCtrl+Alt+Q"})
 }
 
 func showTrayMenu() {
@@ -154,6 +161,8 @@ func runTrayCommand(cmd int) {
 	case cmdAutostart:
 		setAutostart(!autostartEnabled())
 		invalidateSettings()
+	case cmdUpdate:
+		openReleasesPage()
 	case cmdQuit:
 		quitApp()
 	}
