@@ -18,7 +18,7 @@ const (
 	overlayClass      = "WhereTheFIsMyCursorOverlay"
 	settingsClass     = "WhereTheFIsMyCursorSettings"
 	mutexName         = `Local\` + appName + `.single`
-	trayTip           = appName + ": shake the mouse to find it"
+	trayTipHint       = "shake the mouse to find it"
 	msgAlreadyRunning = appName + " is already running. Look for the halo icon in the tray."
 )
 
@@ -33,6 +33,8 @@ const (
 	frameIntervalActiveMs = 15
 	frameIntervalIdleMs   = 30
 )
+
+var appVersion = "dev"
 
 type drawKey struct {
 	gen    int
@@ -381,7 +383,7 @@ func main() {
 	}
 
 	hAppIcon = makeAppIcon(haloRGB)
-	addTrayIcon(appHwnd, hAppIcon, trayTip)
+	addTrayIcon(appHwnd, hAppIcon, appName+" "+appVersion+": "+trayTipHint)
 	defer removeTrayIcon()
 
 	registerHotkeys()

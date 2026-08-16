@@ -8,3 +8,4 @@ coverage.out
 Thumbs.db
 Desktop.ini
 .DS_Store
+*.exe.new

@@ -1,0 +1,101 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            {
+              echo "version=$GITHUB_REF_NAME"
+              echo "publish=true"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -n "$(git tag --points-at HEAD --list 'v[0-9]*')" ]]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "This commit is already tagged; the tag build will publish it."
+            exit 0
+          fi
+          last="$(git tag --list 'v[0-9]*' --sort=-v:refname | head -n 1)"
+          if [[ -z "$last" ]]; then
+            next="v0.0.1"
+          else
+            IFS=. read -r major minor patch <<< "${last#v}"
+            next="v$major.$minor.$((patch + 1))"
+          fi
+          {
+            echo "version=$next"
+            echo "publish=true"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Vet and test
+        shell: bash
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: Version check
+        if: steps.version.outputs.publish == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${{ steps.version.outputs.version }}"
+          [[ "$v" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid version: $v"; exit 1; }
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            newest="$(git tag --list 'v[0-9]*' --sort=-v:refname | head -n 1)"
+            if [[ "$newest" != "$v" ]]; then
+              echo "$v is not newer than existing tag $newest"
+              exit 1
+            fi
+          fi
+          if gh release view "$v" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "release $v already exists"
+            exit 1
+          fi
+
+      - name: Build
+        if: steps.version.outputs.publish == 'true'
+        shell: bash
+        run: >
+          go build -trimpath
+          -ldflags "-H windowsgui -s -w -X main.appVersion=${{ steps.version.outputs.version }}"
+          -o wherethefismycursor.exe .
+
+      - name: Publish release
+        if: steps.version.outputs.publish == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "${{ steps.version.outputs.version }}"
+          wherethefismycursor.exe
+          --title "${{ steps.version.outputs.version }}"
+          --generate-notes
+          --target "$GITHUB_SHA"
